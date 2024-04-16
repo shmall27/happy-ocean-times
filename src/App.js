@@ -1,17 +1,14 @@
 import { Canvas } from "@react-three/fiber";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import * as THREE from "three";
 import { OrbitControls } from "@react-three/drei";
-
 import { useVectorDb } from "./hooks/useVectorDb";
 import { ImagePlane } from "./components/ImagePlane";
 
-const INCREMENTS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 50, 100, 250, 500, 750, 1000,
-];
+const INCREMENTS = [1, 2, 3, 10, 20, 50, 100, 250, 500, 750, 1000];
 
 const App = () => {
-  const [imageUrls, setImageUrls] = useState([]);
-  const [imagePositions, setImagePositions] = useState([]);
+  const [images, setImages] = useState([]);
 
   const { db, isLoading } = useVectorDb();
 
@@ -21,7 +18,7 @@ const App = () => {
       return;
     }
 
-    for (let file of files) {
+    for (let [index, file] of Array.from(files).entries()) {
       if (file && file.type.startsWith("image/")) {
         const formData = new FormData();
         formData.append("image", file);
@@ -38,24 +35,32 @@ const App = () => {
             const imageVector = data.vector;
 
             await db.insert(imageUrl, imageVector, []);
-            setImageUrls((prevImages) => [...prevImages, imageUrl]);
+            const singleImageToAdd = { url: imageUrl, position: null };
+            setImages((prevImages) => [...prevImages, singleImageToAdd]);
 
-            if (INCREMENTS.includes(imagePositions.length + 1)) {
-              // This is when we run the PCA on the entire set of images
+            // Deciding on running PCA based on current index + existing length + 1
+            if (INCREMENTS.includes(setImages.length + index + 1)) {
               const newEmbeddings = await db.project_all_embeddings();
-              const vectors = newEmbeddings.map(
+              const newPositions = newEmbeddings.map(
                 (embedding) => embedding.vector
               );
-              setImagePositions(vectors);
+              setImages((prevImages) =>
+                prevImages.map((img, idx) => ({
+                  url: img.url,
+                  position: newPositions[idx],
+                }))
+              );
             } else {
-              // This is when we run PCA on just the new image
-              const threeDimVector = await db.project_single_embedding(
+              const singleEmbedding = await db.project_single_embedding(
                 imageVector
               );
-              setImagePositions((prevPositions) => [
-                ...prevPositions,
-                threeDimVector.vector,
-              ]);
+              // Update the last image's position in the state
+              setImages((prevImages) => {
+                let imagesCopy = [...prevImages];
+                imagesCopy[imagesCopy.length - 1].position =
+                  singleEmbedding.vector;
+                return imagesCopy;
+              });
             }
           } else {
             const errorData = await response.json();
@@ -72,7 +77,6 @@ const App = () => {
     event.preventDefault();
     event.stopPropagation();
     const files = event.dataTransfer.files;
-    console.log("files", files);
     handleImageUpload(files);
   };
 
@@ -84,8 +88,7 @@ const App = () => {
   const handleReset = async () => {
     if (db) {
       await db.clear();
-      setImageUrls([]);
-      setImagePositions([]);
+      setImages([]);
     }
   };
 
@@ -97,23 +100,27 @@ const App = () => {
       style={{ width: "100vw", height: "100vh" }}
     >
       <button onClick={handleReset}>Reset</button>
-      <Canvas camera={{ position: [0, 0, 50] }}>
+      <Canvas
+        camera={{ position: [0, 0, 50] }}
+        gl={{ antialias: true, toneMapping: THREE.NoToneMapping }}
+        linear
+      >
         <OrbitControls minZoom={0} maxZoom={Infinity} />
-        {imageUrls.map((image, index) => {
-          console.log("position", imagePositions[index], "url", image);
-          if (imagePositions[index]) {
-            return (
-              <ImagePlane
-                key={index}
-                position={[
-                  imagePositions[index][0] * (1 + imageUrls.length / 10),
-                  imagePositions[index][1] * (1 + imageUrls.length / 10),
-                  imagePositions[index][2] * (1 + imageUrls.length / 10),
-                ]}
-                path={image}
-              />
-            );
+        {images.map((image, index) => {
+          if (!image || !image.position) {
+            return null;
           }
+          return (
+            <ImagePlane
+              key={index}
+              position={[
+                image.position[0] * (1 + images.length / 5),
+                image.position[1] * (1 + images.length / 5),
+                image.position[2] * (1 + images.length / 5),
+              ]}
+              path={image.url}
+            />
+          );
         })}
       </Canvas>
     </div>
