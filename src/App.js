@@ -35,30 +35,33 @@ const App = () => {
             const imageVector = data.vector;
 
             await db.insert(imageUrl, imageVector, []);
-            const singleImageToAdd = { url: imageUrl, position: null };
-            setImages((prevImages) => [...prevImages, singleImageToAdd]);
 
-            // Deciding on running PCA based on current index + existing length + 1
             if (INCREMENTS.includes(setImages.length + index + 1)) {
               const newEmbeddings = await db.project_all_embeddings();
               const newPositions = newEmbeddings.map(
                 (embedding) => embedding.vector
               );
-              setImages((prevImages) =>
-                prevImages.map((img, idx) => ({
+              setImages((prevImages) => {
+                let imagesCopy = prevImages.map((img, idx) => ({
                   url: img.url,
                   position: newPositions[idx],
-                }))
-              );
+                }));
+                imagesCopy.push({
+                  url: imageUrl,
+                  position: newPositions[newPositions.length - 1],
+                });
+                return imagesCopy;
+              });
             } else {
               const singleEmbedding = await db.project_single_embedding(
                 imageVector
               );
-              // Update the last image's position in the state
               setImages((prevImages) => {
                 let imagesCopy = [...prevImages];
-                imagesCopy[imagesCopy.length - 1].position =
-                  singleEmbedding.vector;
+                imagesCopy.push({
+                  url: imageUrl,
+                  position: singleEmbedding,
+                });
                 return imagesCopy;
               });
             }
