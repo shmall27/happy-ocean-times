@@ -1,9 +1,16 @@
 import { Canvas } from "@react-three/fiber";
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "@react-three/drei";
 import { useVectorDb } from "./hooks/useVectorDb";
 import { ImagePlane } from "./components/ImagePlane";
+import { ImageQueue } from "./utils/imageQueue";
+import {
+  clearObjectStore,
+  getAllFileHandles,
+  saveFileHandle,
+  updateFileHandleVector,
+} from "./utils/indexedDb";
 
 const INCREMENTS = [1, 2, 3, 10, 20, 50, 100, 250, 500, 750, 1000];
 
@@ -12,13 +19,13 @@ const App = () => {
 
   const { db, isLoading } = useVectorDb();
 
-  const handleImageUpload = async (files) => {
-    if (!db || isLoading) {
-      console.log("DB is not ready or still loading.");
-      return;
-    }
+  const handleImageUpload = useCallback(
+    async (file, index) => {
+      if (!db || isLoading) {
+        console.log("DB is not ready or still loading.");
+        return;
+      }
 
-    for (let [index, file] of Array.from(files).entries()) {
       if (file && file.type.startsWith("image/")) {
         const formData = new FormData();
         formData.append("image", file);
@@ -36,7 +43,7 @@ const App = () => {
 
             await db.insert(imageUrl, imageVector, []);
 
-            if (INCREMENTS.includes(setImages.length + index + 1)) {
+            if (INCREMENTS.includes(index + 1)) {
               const newEmbeddings = await db.project_all_embeddings();
               const newPositions = newEmbeddings.map(
                 (embedding) => embedding.vector
@@ -52,6 +59,9 @@ const App = () => {
                 });
                 return imagesCopy;
               });
+              for (let image of images) {
+                updateFileHandleVector(image.url, image.position);
+              }
             } else {
               const singleEmbedding = await db.project_single_embedding(
                 imageVector
@@ -64,6 +74,7 @@ const App = () => {
                 });
                 return imagesCopy;
               });
+              updateFileHandleVector(imageUrl, singleEmbedding);
             }
           } else {
             const errorData = await response.json();
@@ -73,14 +84,38 @@ const App = () => {
           console.error("Network error:", error);
         }
       }
+    },
+    [db, isLoading, images]
+  );
+
+  const imageQueue = useMemo(() => {
+    if (!db || isLoading) {
+      return null;
     }
-  };
+    return ImageQueue.getInstance(handleImageUpload);
+  }, [isLoading, handleImageUpload, db]);
 
   const onDrop = (event) => {
     event.preventDefault();
     event.stopPropagation();
+    const fileHandles = [];
+    const items = event.dataTransfer.items;
+    for (let item of items) {
+      if (item.kind === "file") {
+        const fileHandle = item.getAsFileSystemHandle();
+        fileHandles.push(fileHandle);
+      }
+    }
+
+    fileHandles.forEach(async (handlePromise) => {
+      const fileHandle = await handlePromise;
+      saveFileHandle(fileHandle);
+    });
+
     const files = event.dataTransfer.files;
-    handleImageUpload(files);
+    for (let file of files) {
+      imageQueue.enqueue(file);
+    }
   };
 
   const onDragOver = (event) => {
@@ -91,6 +126,7 @@ const App = () => {
   const handleReset = async () => {
     if (db) {
       await db.clear();
+      await clearObjectStore();
       setImages([]);
     }
   };
