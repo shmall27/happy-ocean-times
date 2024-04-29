@@ -1,2 +1,2 @@
-# happy-ocean-times
-Tell me about your happy ocean times
+# Your Mind's Eye
+An introspective tool for surfing your subconscious
